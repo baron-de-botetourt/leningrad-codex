@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hebrew Bible Annotation Workbench</title>
+    <link rel="stylesheet" href="/app/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Hebrew Bible Annotation Workbench</h1>
+        <p>BHS/WLC text with per-word English gloss annotation and BDB lookup.</p>
+      </div>
+      <div class="selectors">
+        <label>
+          Book
+          <select id="bookSelect"></select>
+        </label>
+        <label>
+          Chapter
+          <select id="chapterSelect"></select>
+        </label>
+        <label>
+          Verse
+          <select id="verseSelect"></select>
+        </label>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel text-panel">
+        <h2>Hebrew Text (WLC)</h2>
+        <p class="hint">Click a word to inspect BDB and add/edit your English annotation.</p>
+        <div id="hebrewLine" class="hebrew-line" dir="rtl" lang="he"></div>
+      </section>
+
+      <aside class="panel detail-panel">
+        <h2>Word Detail</h2>
+        <div id="emptyState" class="muted">Select a word to begin.</div>
+        <div id="wordDetail" class="word-detail hidden">
+          <div class="detail-row"><strong>Hebrew:</strong> <span id="detailHebrew"></span></div>
+          <div class="detail-row"><strong>Lemma:</strong> <span id="detailLemma"></span></div>
+          <div class="detail-row"><strong>Morph:</strong> <span id="detailMorph"></span></div>
+          <div class="detail-row"><strong>BDB ID:</strong> <span id="detailBdb"></span></div>
+
+          <label for="annotationInput">English Annotation</label>
+          <input id="annotationInput" type="text" placeholder="e.g., beginning" />
+          <button id="saveAnnotationBtn" type="button">Save Annotation</button>
+
+          <h3>BDB Entry</h3>
+          <div id="bdbEntry" class="bdb-entry"></div>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Data source files: <code>/data/wlc_sample.json</code> and <code>/data/bdb_sample.json</code>. Replace with full datasets using the documented schema in README.
+      </p>
+    </footer>
+
+    <script type="module" src="/app/main.js"></script>
+  </body>
+</html>

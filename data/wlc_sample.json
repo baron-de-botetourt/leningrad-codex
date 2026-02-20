@@ -1,0 +1,23 @@
+{
+  "books": {
+    "Genesis": {
+      "chapters": {
+        "1": {
+          "verses": {
+            "1": {
+              "words": [
+                { "text": "בְּרֵאשִׁית", "lemma": "רֵאשִׁית", "morph": "N-fs", "bdb": "BDB-0912" },
+                { "text": "בָּרָא", "lemma": "בָּרָא", "morph": "V-qp3ms", "bdb": "BDB-0135" },
+                { "text": "אֱלֹהִים", "lemma": "אֱלֹהִים", "morph": "N-mp", "bdb": "BDB-0043" },
+                { "text": "אֵת", "lemma": "אֵת", "morph": "Part", "bdb": "BDB-0085" },
+                { "text": "הַשָּׁמַיִם", "lemma": "שָׁמַיִם", "morph": "N-mp", "bdb": "BDB-1029" },
+                { "text": "וְאֵת", "lemma": "אֵת", "morph": "Conj+Part", "bdb": "BDB-0085" },
+                { "text": "הָאָרֶץ", "lemma": "אֶרֶץ", "morph": "N-fs", "bdb": "BDB-0075" }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

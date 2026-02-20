@@ -1,0 +1,34 @@
+{
+  "entries": {
+    "BDB-0912": {
+      "headword": "רֵאשִׁית",
+      "glosses": ["beginning", "first", "chief"],
+      "definition": "Beginning, first, chief part; often in temporal construction 'in the beginning of'."
+    },
+    "BDB-0135": {
+      "headword": "בָּרָא",
+      "glosses": ["create", "shape", "form"],
+      "definition": "To create, especially with God as subject in Hebrew Bible usage."
+    },
+    "BDB-0043": {
+      "headword": "אֱלֹהִים",
+      "glosses": ["God", "gods", "divine being"],
+      "definition": "God/gods; plural form with singular meaning for Israel's God in many contexts."
+    },
+    "BDB-0085": {
+      "headword": "אֵת",
+      "glosses": ["direct object marker", "with"],
+      "definition": "Particle marking a definite direct object; distinct from preposition 'with' in other pointing contexts."
+    },
+    "BDB-1029": {
+      "headword": "שָׁמַיִם",
+      "glosses": ["heavens", "sky"],
+      "definition": "Heavens, sky, celestial realm."
+    },
+    "BDB-0075": {
+      "headword": "אֶרֶץ",
+      "glosses": ["earth", "land", "ground"],
+      "definition": "Earth, land, territory, ground."
+    }
+  }
+}

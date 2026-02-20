@@ -1,0 +1,159 @@
+:root {
+  --bg: #f2ebde;
+  --panel: #fff8ea;
+  --ink: #1f1b16;
+  --accent: #9f3d22;
+  --accent-soft: #d07a61;
+  --line: #dcc9a2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Alegreya", Georgia, serif;
+  color: var(--ink);
+  background: radial-gradient(circle at 10% 10%, #f6f0e5 0%, var(--bg) 45%, #e9ddc6 100%);
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 1.2rem 1.5rem;
+  border-bottom: 2px solid var(--line);
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.selectors {
+  display: flex;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+}
+
+select,
+input,
+button {
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+  background: #fffdf6;
+}
+
+button {
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-soft) 100%);
+  color: #fff;
+  border: none;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1rem;
+  padding: 1rem 1.5rem 2rem;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem;
+}
+
+.text-panel {
+  min-height: 45vh;
+}
+
+.hint,
+.muted {
+  margin-top: 0.3rem;
+  color: #63553f;
+}
+
+.hebrew-line {
+  margin-top: 1.2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-start;
+  align-items: flex-start;
+  line-height: 2;
+}
+
+.word {
+  border: 1px solid transparent;
+  padding: 0.1rem 0.35rem;
+  border-radius: 7px;
+  transition: all 120ms ease;
+}
+
+.word:hover {
+  border-color: var(--accent-soft);
+  background: #fff2d8;
+}
+
+.word.active {
+  border-color: var(--accent);
+  background: #ffe4b6;
+}
+
+.word .annotation {
+  display: block;
+  font-size: 0.72rem;
+  color: #7a2f1b;
+  direction: ltr;
+  text-align: center;
+}
+
+.word-detail {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.detail-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.bdb-entry {
+  max-height: 38vh;
+  overflow: auto;
+  line-height: 1.4;
+  border: 1px solid var(--line);
+  background: #fffdf7;
+  border-radius: 10px;
+  padding: 0.7rem;
+}
+
+.hidden {
+  display: none;
+}
+
+.footer {
+  padding: 0 1.5rem 1.5rem;
+  color: #6b5b40;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
