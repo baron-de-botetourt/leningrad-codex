@@ -170,6 +170,142 @@ def parse_bdb(bdb_path: Path):
     return {"entries": entries}
 
 
+def clean_strongs_key(raw_id: str) -> str:
+    value = (raw_id or "").strip()
+    if not value:
+        return ""
+    value = value.replace(" ", "")
+    m = re.match(r"^[Hh]?([0-9]+)([A-Za-z]?)$", value)
+    if not m:
+        return value
+    number = str(int(m.group(1)))
+    suffix = m.group(2).lower()
+    return f"{number}{suffix}"
+
+
+def split_strongs_key(key: str):
+    m = re.match(r"^([0-9]+)([a-z]?)$", key)
+    if not m:
+        return None
+    return int(m.group(1)), m.group(2)
+
+
+def strongs_key_variants(key: str):
+    parsed = split_strongs_key(key)
+    if parsed is None:
+        return [key]
+    number, suffix = parsed
+    suffix_upper = suffix.upper()
+
+    variants = [
+        f"{number}{suffix}",
+        f"{number}{suffix_upper}" if suffix else f"{number}",
+        f"{number:04d}{suffix}",
+        f"{number:04d}{suffix_upper}" if suffix else f"{number:04d}",
+        f"H{number}{suffix}",
+        f"H{number}{suffix_upper}" if suffix else f"H{number}",
+        f"h{number}{suffix}",
+        f"h{number}{suffix_upper}" if suffix else f"h{number}",
+    ]
+    if suffix:
+        variants.extend(
+            [
+                f"{number} {suffix}",
+                f"{number} {suffix_upper}",
+                f"H{number} {suffix}",
+                f"H{number} {suffix_upper}",
+            ]
+        )
+
+    seen = set()
+    ordered = []
+    for variant in variants:
+        if variant not in seen:
+            ordered.append(variant)
+            seen.add(variant)
+    return ordered
+
+
+def append_unique(values, candidate):
+    val = (candidate or "").strip()
+    if val and val not in values:
+        values.append(val)
+
+
+def parse_strongs_hebrew(strongs_path: Path):
+    tree = ET.parse(strongs_path)
+    root = tree.getroot()
+    entries = {}
+
+    for el in root.iter():
+        tag = strip_ns(el.tag).lower()
+        attrs = {k.lower(): v for k, v in el.attrib.items()}
+        entry_id = attrs.get("id") or attrs.get("{http://www.w3.org/XML/1998/namespace}id")
+        if tag not in {"entry", "item"} or not entry_id:
+            continue
+
+        normalized_key = clean_strongs_key(str(entry_id))
+        if not normalized_key:
+            continue
+
+        headword = ""
+        transliteration = ""
+        pronunciation = ""
+        source = ""
+        meaning = ""
+        usage = ""
+        glosses = []
+
+        for child in list(el):
+            child_tag = strip_ns(child.tag).lower()
+            child_text = re.sub(r"\s+", " ", text_of(child)).strip()
+            if child_tag in {"w", "word", "headword"}:
+                if child_text:
+                    headword = child_text
+                child_attrs = {k.lower(): v for k, v in child.attrib.items()}
+                if not transliteration:
+                    transliteration = child_attrs.get("xlit", "").strip()
+                if not pronunciation:
+                    pronunciation = child_attrs.get("pron", "").strip()
+            elif child_tag in {"source", "etym", "etymology"} and child_text:
+                source = child_text
+            elif child_tag in {"meaning", "gloss", "definition", "def"} and child_text:
+                meaning = child_text
+                append_unique(glosses, re.split(r"[;,]", child_text)[0])
+            elif child_tag in {"usage", "kjv", "kjv_def"} and child_text:
+                usage = child_text
+
+        if not glosses:
+            append_unique(glosses, meaning)
+        if not glosses:
+            append_unique(glosses, headword)
+
+        definition_parts = []
+        if source:
+            definition_parts.append(f"Source: {source}")
+        if meaning:
+            definition_parts.append(f"Meaning: {meaning}")
+        if usage:
+            definition_parts.append(f"Usage: {usage}")
+        definition = " ".join(definition_parts).strip()
+
+        payload = {
+            "headword": headword,
+            "transliteration": transliteration,
+            "pronunciation": pronunciation,
+            "glosses": glosses,
+            "definition": definition,
+            "source": source,
+            "meaning": meaning,
+            "usage": usage,
+        }
+
+        for key_variant in strongs_key_variants(normalized_key):
+            entries[key_variant] = payload
+
+    return {"entries": entries}
+
+
 def relink_bdb_codes(wlc_data, strong_to_bdb):
     for book in wlc_data["books"].values():
         for chapter in book["chapters"].values():
@@ -224,12 +360,15 @@ def main():
         relink_bdb_codes(wlc_data, strong_to_bdb)
 
         bdb_data = parse_bdb(lex_root / "BrownDriverBriggs.xml")
+        strongs_data = parse_strongs_hebrew(lex_root / "StrongHebrew.xml")
 
     (out_dir / "wlc_full.json").write_text(json.dumps(wlc_data, ensure_ascii=False), encoding="utf-8")
     (out_dir / "bdb_full.json").write_text(json.dumps(bdb_data, ensure_ascii=False), encoding="utf-8")
+    (out_dir / "strongs_full.json").write_text(json.dumps(strongs_data, ensure_ascii=False), encoding="utf-8")
 
     print(f"Wrote {out_dir / 'wlc_full.json'}")
     print(f"Wrote {out_dir / 'bdb_full.json'}")
+    print(f"Wrote {out_dir / 'strongs_full.json'}")
 
 
 if __name__ == "__main__":

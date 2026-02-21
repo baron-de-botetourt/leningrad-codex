@@ -28,6 +28,7 @@ cd /Users/tindelllockett/projects/peter-test
 ```bash
 ./scripts/tanach_cli.py verse "Gen 1:1"
 ./scripts/tanach_cli.py verse "Gen 1:1" --format json
+./scripts/tanach_cli.py verse "Gen 1:1" --sources strongs --format json
 ```
 
 3) Search tokens:
@@ -48,7 +49,7 @@ cd /Users/tindelllockett/projects/peter-test
 5) Generate and persist a draft translation:
 
 ```bash
-./scripts/tanach_cli.py translation draft --ref "Gen 1:1" --annotation-layer gloss --sources bdb --format json
+./scripts/tanach_cli.py translation draft --ref "Gen 1:1" --annotation-layer gloss --sources bdb,strongs --format json
 ./scripts/tanach_cli.py translation draft --ref "Gen 1:1" --persist-version draft.v1
 ./scripts/tanach_cli.py translation get --version draft.v1 --ref "Gen 1:1"
 ```
@@ -65,7 +66,7 @@ cd /Users/tindelllockett/projects/peter-test
 
 This gives you a stable base for:
 
-- lexical lookup (`bdb` now, `strongs` later),
+- lexical lookup (`bdb` + `strongs`),
 - translation mapping by verse,
 - apparatus/masoretic notes as additional source ids or annotation layers.
 
@@ -87,6 +88,7 @@ Inspect sources and look up entries:
 ```bash
 ./scripts/tanach_cli.py source list --format tsv
 ./scripts/tanach_cli.py source lookup --id bdb --key t.ad.ag --format json
+./scripts/tanach_cli.py source lookup --id strongs --key 7225 --format json
 ```
 
 Notes:
@@ -117,6 +119,7 @@ It downloads and converts:
 
 - Westminster Leningrad / MorphHB source: `https://github.com/openscriptures/morphhb`
 - Hebrew Lexicon (includes Brown-Driver-Briggs XML): `https://github.com/openscriptures/HebrewLexicon`
+  - Strongs Hebrew dataset: `StrongHebrew.xml` in the same repo (open XML source)
 
 ## Notes on source texts
 

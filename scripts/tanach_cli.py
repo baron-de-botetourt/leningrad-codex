@@ -16,6 +16,7 @@ from typing import Any, Iterable
 DEFAULT_DB_PATH = Path("data/tanach_cli.sqlite")
 DEFAULT_WLC_PATH = Path("data/wlc_full.json")
 DEFAULT_BDB_PATH = Path("data/bdb_full.json")
+DEFAULT_STRONGS_PATH = Path("data/strongs_full.json")
 
 
 BOOK_ORDER = [
@@ -445,6 +446,7 @@ def initialize_db(
     db_path: Path,
     wlc_path: Path,
     bdb_path: Path,
+    strongs_path: Path,
     rebuild: bool,
 ) -> dict[str, Any]:
     if not wlc_path.exists():
@@ -484,6 +486,21 @@ def initialize_db(
                 config_json="{}",
             )
             bdb_entry_count = ingest_source(conn, "bdb")
+            strongs_entry_count = 0
+            strongs_loaded = False
+            if strongs_path.exists():
+                register_source(
+                    conn=conn,
+                    source_id="strongs",
+                    source_type="keyed-json",
+                    path=str(strongs_path),
+                    root_path="entries",
+                    key_field="",
+                    lookup_token_field="lemma",
+                    config_json=json.dumps({"lemma_normalizer": "strongs"}),
+                )
+                strongs_entry_count = ingest_source(conn, "strongs")
+                strongs_loaded = True
 
             books_count = conn.execute("SELECT COUNT(DISTINCT book) FROM tokens").fetchone()[0]
             chapter_count = conn.execute("SELECT COUNT(DISTINCT book || ':' || chapter) FROM tokens").fetchone()[0]
@@ -491,6 +508,7 @@ def initialize_db(
 
             upsert_meta(conn, "wlc_path", str(wlc_path))
             upsert_meta(conn, "bdb_path", str(bdb_path))
+            upsert_meta(conn, "strongs_path", str(strongs_path))
             upsert_meta(
                 conn,
                 "counts",
@@ -500,6 +518,7 @@ def initialize_db(
                     "verses": verse_count,
                     "tokens": len(token_rows),
                     "bdb_entries": bdb_entry_count,
+                    "strongs_entries": strongs_entry_count,
                 },
             )
 
@@ -510,6 +529,8 @@ def initialize_db(
             "verses": verse_count,
             "tokens": len(token_rows),
             "bdb_entries": bdb_entry_count,
+            "strongs_loaded": strongs_loaded,
+            "strongs_entries": strongs_entry_count,
         }
     finally:
         conn.close()
@@ -560,6 +581,38 @@ def parse_source_ids(raw: str | None) -> list[str]:
     return [part.strip() for part in raw.split(",") if part.strip()]
 
 
+def lemma_lookup_candidates(lemma: str) -> list[str]:
+    raw = (lemma or "").strip()
+    if not raw:
+        return []
+
+    candidates = [raw]
+    no_prefix = re.sub(r"^(?:[a-z]/)+", "", raw)
+    candidates.append(no_prefix)
+
+    no_space_suffix = re.sub(r"\s+([a-zA-Z])$", r"\1", no_prefix)
+    candidates.append(no_space_suffix)
+
+    no_space_type = re.sub(r"\s+[a-zA-Z]$", "", no_prefix)
+    candidates.append(no_space_type)
+
+    compact = re.sub(r"\s+", "", no_prefix)
+    candidates.append(compact)
+
+    no_plus = re.sub(r"\+$", "", no_space_type)
+    candidates.append(no_plus)
+    candidates.append(re.sub(r"^(?:[a-z]/)+", "", no_plus))
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for candidate in candidates:
+        value = candidate.strip()
+        if value and value not in seen:
+            ordered.append(value)
+            seen.add(value)
+    return ordered
+
+
 def row_to_token_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "book": row["book"],
@@ -598,7 +651,7 @@ def load_source_config_map(conn: sqlite3.Connection, source_ids: list[str]) -> d
     placeholders = ",".join(["?"] * len(source_ids))
     rows = conn.execute(
         f"""
-        SELECT source_id, lookup_token_field
+        SELECT source_id, lookup_token_field, config_json
         FROM sources
         WHERE source_id IN ({placeholders}) AND enabled = 1
         """,
@@ -630,6 +683,46 @@ def entry_key_for_token(token: dict[str, Any], source_config: sqlite3.Row) -> st
     if lookup_field not in {"text", "lemma", "morph", "bdb"}:
         raise CLIError(f"Invalid source lookup_token_field: {lookup_field}")
     return as_text(token.get(lookup_field))
+
+
+def source_entry_keys_for_token(token: dict[str, Any], source_config: sqlite3.Row) -> list[str]:
+    key = entry_key_for_token(token, source_config)
+    keys = [key]
+
+    config: dict[str, Any] = {}
+    raw_config = source_config["config_json"]
+    if isinstance(raw_config, str) and raw_config.strip():
+        try:
+            parsed = json.loads(raw_config)
+            if isinstance(parsed, dict):
+                config = parsed
+        except json.JSONDecodeError:
+            config = {}
+
+    if source_config["lookup_token_field"] == "lemma" and config.get("lemma_normalizer") == "strongs":
+        keys = lemma_lookup_candidates(key)
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for candidate in keys:
+        value = candidate.strip()
+        if value and value not in seen:
+            ordered.append(value)
+            seen.add(value)
+    return ordered
+
+
+def lookup_source_payload_for_token(
+    conn: sqlite3.Connection,
+    source_id: str,
+    token: dict[str, Any],
+    source_config: sqlite3.Row,
+) -> Any | None:
+    for key in source_entry_keys_for_token(token, source_config):
+        payload = lookup_source_payload(conn, source_id, key)
+        if payload is not None:
+            return payload
+    return None
 
 
 def extract_annotation_text(value: Any) -> str | None:
@@ -754,13 +847,14 @@ def cmd_init_db(args: argparse.Namespace) -> int:
         db_path=resolve_path(args.db),
         wlc_path=resolve_path(args.wlc),
         bdb_path=resolve_path(args.bdb),
+        strongs_path=resolve_path(args.strongs),
         rebuild=args.rebuild,
     )
 
     if args.format == "json":
         print_json(summary)
     else:
-        for key in ("db", "books", "chapters", "verses", "tokens", "bdb_entries"):
+        for key in ("db", "books", "chapters", "verses", "tokens", "bdb_entries", "strongs_loaded", "strongs_entries"):
             print(f"{key}: {summary[key]}")
     return 0
 
@@ -823,8 +917,7 @@ def cmd_verse(args: argparse.Namespace) -> int:
             enriched: dict[str, Any] = {}
             for source_id in source_ids:
                 source_config = source_config_map[source_id]
-                key = entry_key_for_token(token, source_config)
-                payload = lookup_source_payload(conn, source_id, key)
+                payload = lookup_source_payload_for_token(conn, source_id, token, source_config)
                 if payload is not None:
                     enriched[source_id] = payload
             if enriched:
@@ -1427,10 +1520,7 @@ def cmd_translation_draft(args: argparse.Namespace) -> int:
             if not chosen_gloss:
                 for source_id in source_ids:
                     config = source_configs[source_id]
-                    key = entry_key_for_token(token, config)
-                    if not key:
-                        continue
-                    payload = lookup_source_payload(conn, source_id, key)
+                    payload = lookup_source_payload_for_token(conn, source_id, token, config)
                     if payload is None:
                         continue
                     gloss = short_gloss_from_payload(payload)
@@ -1512,10 +1602,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    init_parser = subparsers.add_parser("init-db", help="Ingest WLC/BDB JSON into the local SQLite db.")
+    init_parser = subparsers.add_parser("init-db", help="Ingest WLC/BDB/Strongs JSON into the local SQLite db.")
     init_parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path.")
     init_parser.add_argument("--wlc", default=str(DEFAULT_WLC_PATH), help="Path to WLC JSON.")
     init_parser.add_argument("--bdb", default=str(DEFAULT_BDB_PATH), help="Path to BDB JSON.")
+    init_parser.add_argument("--strongs", default=str(DEFAULT_STRONGS_PATH), help="Path to Strongs JSON.")
     init_parser.add_argument("--rebuild", action="store_true", help="Rebuild token/source tables before ingest.")
     add_output_arguments(init_parser)
     init_parser.set_defaults(func=cmd_init_db)
@@ -1668,7 +1759,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     translation_draft_parser.add_argument(
         "--sources",
-        default="bdb",
+        default="bdb,strongs",
         help="Comma-separated fallback source ids used when annotation gloss is absent.",
     )
     translation_draft_parser.add_argument(
