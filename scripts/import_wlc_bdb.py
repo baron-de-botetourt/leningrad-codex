@@ -333,6 +333,15 @@ def find_repo_root(temp_root: Path, prefix: str):
     return matches[0]
 
 
+def resolve_lexicon_file(lex_root: Path, candidates: list[str], label: str) -> Path:
+    for rel in candidates:
+        path = lex_root / rel
+        if path.exists():
+            return path
+    attempted = ", ".join(str(lex_root / rel) for rel in candidates)
+    raise RuntimeError(f"Could not find {label}. Tried: {attempted}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Import OSHB/WLC + BDB into app JSON format.")
     parser.add_argument("--out-dir", default="data", help="Output directory")
@@ -356,11 +365,27 @@ def main():
 
         wlc_data = parse_morphhb(morph_root)
 
-        strong_to_bdb = parse_lexical_index(lex_root / "LexicalIndex.xml")
+        lexical_index_path = resolve_lexicon_file(
+            lex_root,
+            ["LexicalIndex.xml", "lexicalindex.xml"],
+            "LexicalIndex XML",
+        )
+        bdb_path = resolve_lexicon_file(
+            lex_root,
+            ["BrownDriverBriggs.xml", "browndriverbriggs.xml"],
+            "BrownDriverBriggs XML",
+        )
+        strongs_path = resolve_lexicon_file(
+            lex_root,
+            ["HebrewStrong.xml", "StrongHebrew.xml", "hebrewstrong.xml", "stronghebrew.xml"],
+            "HebrewStrong XML",
+        )
+
+        strong_to_bdb = parse_lexical_index(lexical_index_path)
         relink_bdb_codes(wlc_data, strong_to_bdb)
 
-        bdb_data = parse_bdb(lex_root / "BrownDriverBriggs.xml")
-        strongs_data = parse_strongs_hebrew(lex_root / "StrongHebrew.xml")
+        bdb_data = parse_bdb(bdb_path)
+        strongs_data = parse_strongs_hebrew(strongs_path)
 
     (out_dir / "wlc_full.json").write_text(json.dumps(wlc_data, ensure_ascii=False), encoding="utf-8")
     (out_dir / "bdb_full.json").write_text(json.dumps(bdb_data, ensure_ascii=False), encoding="utf-8")
