@@ -8,6 +8,7 @@ import json
 import re
 import sqlite3
 import sys
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -278,6 +279,116 @@ def as_text(value: Any) -> str:
     return str(value)
 
 
+def parse_source_config_json(raw_config: Any) -> dict[str, Any]:
+    if isinstance(raw_config, dict):
+        return dict(raw_config)
+    if isinstance(raw_config, str) and raw_config.strip():
+        try:
+            parsed = json.loads(raw_config)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def first_non_empty_text(*values: Any) -> str:
+    for value in values:
+        text = as_text(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def slugify_source_token(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", ".", as_text(value).lower()).strip(".")
+    return slug
+
+
+def infer_source_provenance_from_doc(source_id: str, source_doc: Any) -> dict[str, str]:
+    if not isinstance(source_doc, dict):
+        return {}
+
+    metadata = source_doc.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    provider = first_non_empty_text(metadata.get("source_provider"), metadata.get("provider"))
+    dataset = first_non_empty_text(
+        metadata.get("source_lexicon_name"),
+        metadata.get("source_index_title"),
+        metadata.get("dataset"),
+    )
+    rendering_id = first_non_empty_text(
+        metadata.get("rendering_id"),
+        metadata.get("source_rendering_id"),
+    )
+    display_name = first_non_empty_text(
+        metadata.get("rendering_name"),
+        metadata.get("source_rendering_name"),
+        metadata.get("display_name"),
+        metadata.get("source_display_name"),
+    )
+
+    if not rendering_id:
+        provider_token = slugify_source_token(provider)
+        rendering_id = f"{source_id}.{provider_token}" if provider_token else source_id
+
+    if not display_name:
+        if dataset and provider:
+            display_name = f"{dataset} ({provider})"
+        elif dataset:
+            display_name = dataset
+        elif provider:
+            display_name = f"{source_id} ({provider})"
+        else:
+            display_name = source_id
+
+    info = {
+        "display_name": display_name,
+        "provider": provider,
+        "dataset": dataset,
+        "rendering_id": rendering_id,
+    }
+    return {key: value for key, value in info.items() if value}
+
+
+def source_descriptor(source_id: str, source_path: str, raw_config: Any) -> dict[str, Any]:
+    config = parse_source_config_json(raw_config)
+
+    provider = first_non_empty_text(config.get("provider"), config.get("source_provider"))
+    dataset = first_non_empty_text(config.get("dataset"), config.get("source_dataset"))
+    display_name = first_non_empty_text(config.get("display_name"), config.get("source_display_name"))
+    rendering_id = first_non_empty_text(config.get("rendering_id"), config.get("source_rendering_id"))
+
+    if not rendering_id:
+        provider_token = slugify_source_token(provider)
+        rendering_id = f"{source_id}.{provider_token}" if provider_token else source_id
+
+    if not display_name:
+        if dataset and provider:
+            display_name = f"{dataset} ({provider})"
+        elif dataset:
+            display_name = dataset
+        elif provider:
+            display_name = f"{source_id} ({provider})"
+        else:
+            display_name = source_id
+
+    descriptor: dict[str, Any] = {
+        "source_id": source_id,
+        "display_name": display_name,
+        "rendering_id": rendering_id,
+    }
+    if provider:
+        descriptor["provider"] = provider
+    if dataset:
+        descriptor["dataset"] = dataset
+    if source_path:
+        descriptor["path"] = source_path
+    return descriptor
+
+
 def iterate_wlc_tokens(wlc_data: dict[str, Any]) -> Iterable[tuple[str, int, int, int, str, str, str, str]]:
     books = wlc_data.get("books")
     if not isinstance(books, dict):
@@ -418,7 +529,7 @@ def register_source(
 def ingest_source(conn: sqlite3.Connection, source_id: str) -> int:
     source = conn.execute(
         """
-        SELECT source_id, path, root_path, key_field
+        SELECT source_id, path, root_path, key_field, config_json
         FROM sources
         WHERE source_id = ? AND enabled = 1
         """,
@@ -433,13 +544,59 @@ def ingest_source(conn: sqlite3.Connection, source_id: str) -> int:
 
     source_doc = read_json(source_path)
     rows = list(extract_source_rows(source_doc, source["root_path"], source["key_field"]))
+    row_map = {key: payload_json for key, payload_json in rows}
+
+    config = parse_source_config_json(source["config_json"])
+    inferred_provenance = infer_source_provenance_from_doc(source["source_id"], source_doc)
+    config_changed = False
+    for field, value in inferred_provenance.items():
+        if not first_non_empty_text(config.get(field)):
+            config[field] = value
+            config_changed = True
+    if config_changed:
+        conn.execute(
+            "UPDATE sources SET config_json = ?, updated_at = CURRENT_TIMESTAMP WHERE source_id = ?",
+            (json.dumps(config, ensure_ascii=False), source_id),
+        )
+
+    alias_field = config.get("alias_field")
+    if isinstance(alias_field, str) and alias_field.strip() and isinstance(source_doc, dict):
+        alias_obj = source_doc.get(alias_field)
+        if isinstance(alias_obj, dict):
+            for alias_key, canonical_key in alias_obj.items():
+                alias = str(alias_key).strip()
+                canonical = str(canonical_key).strip()
+                if not alias or not canonical:
+                    continue
+                payload_json = row_map.get(canonical)
+                if payload_json is None:
+                    continue
+                row_map[alias] = payload_json
+
+    headword_alias_prefix = config.get("headword_alias_prefix")
+    if isinstance(headword_alias_prefix, str) and headword_alias_prefix:
+        for payload_json in list(row_map.values()):
+            try:
+                payload = json.loads(payload_json)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            headword = payload.get("headword")
+            if not isinstance(headword, str) or not headword.strip():
+                continue
+            normalized = normalize_hebrew_lookup(headword)
+            if not normalized:
+                continue
+            alias_key = f"{headword_alias_prefix}{normalized}"
+            row_map.setdefault(alias_key, payload_json)
 
     conn.execute("DELETE FROM source_entries WHERE source_id = ?", (source_id,))
     conn.executemany(
         "INSERT INTO source_entries(source_id, entry_key, payload_json) VALUES (?, ?, ?)",
-        ((source_id, key, payload_json) for key, payload_json in rows),
+        ((source_id, key, payload_json) for key, payload_json in row_map.items()),
     )
-    return len(rows)
+    return len(row_map)
 
 
 def initialize_db(
@@ -483,7 +640,7 @@ def initialize_db(
                 root_path="entries",
                 key_field="",
                 lookup_token_field="bdb",
-                config_json="{}",
+                config_json=json.dumps({"alias_field": "aliases", "headword_alias_prefix": "__hw__:"}),
             )
             bdb_entry_count = ingest_source(conn, "bdb")
             strongs_entry_count = 0
@@ -613,6 +770,13 @@ def lemma_lookup_candidates(lemma: str) -> list[str]:
     return ordered
 
 
+def normalize_hebrew_lookup(value: str) -> str:
+    decomposed = unicodedata.normalize("NFD", value or "")
+    without_marks = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+    letters_only = re.sub(r"[^\u05d0-\u05ea]", "", without_marks)
+    return unicodedata.normalize("NFC", letters_only).strip()
+
+
 def row_to_token_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "book": row["book"],
@@ -651,7 +815,7 @@ def load_source_config_map(conn: sqlite3.Connection, source_ids: list[str]) -> d
     placeholders = ",".join(["?"] * len(source_ids))
     rows = conn.execute(
         f"""
-        SELECT source_id, lookup_token_field, config_json
+        SELECT source_id, source_type, path, lookup_token_field, config_json
         FROM sources
         WHERE source_id IN ({placeholders}) AND enabled = 1
         """,
@@ -689,15 +853,7 @@ def source_entry_keys_for_token(token: dict[str, Any], source_config: sqlite3.Ro
     key = entry_key_for_token(token, source_config)
     keys = [key]
 
-    config: dict[str, Any] = {}
-    raw_config = source_config["config_json"]
-    if isinstance(raw_config, str) and raw_config.strip():
-        try:
-            parsed = json.loads(raw_config)
-            if isinstance(parsed, dict):
-                config = parsed
-        except json.JSONDecodeError:
-            config = {}
+    config = parse_source_config_json(source_config["config_json"])
 
     if source_config["lookup_token_field"] == "lemma" and config.get("lemma_normalizer") == "strongs":
         keys = lemma_lookup_candidates(key)
@@ -722,6 +878,20 @@ def lookup_source_payload_for_token(
         payload = lookup_source_payload(conn, source_id, key)
         if payload is not None:
             return payload
+    if source_id == "bdb":
+        # Fallback for unresolved legacy BDB IDs: lemma -> strongs headword -> BDB headword alias.
+        lemma = as_text(token.get("lemma"))
+        for strongs_key in lemma_lookup_candidates(lemma):
+            strongs_payload = lookup_source_payload(conn, "strongs", strongs_key)
+            if not isinstance(strongs_payload, dict):
+                continue
+            headword = as_text(strongs_payload.get("headword"))
+            normalized = normalize_hebrew_lookup(headword)
+            if not normalized:
+                continue
+            payload = lookup_source_payload(conn, "bdb", f"__hw__:{normalized}")
+            if payload is not None:
+                return payload
     return None
 
 
@@ -912,6 +1082,14 @@ def cmd_verse(args: argparse.Namespace) -> int:
 
         source_ids = parse_source_ids(args.sources)
         source_config_map = load_source_config_map(conn, source_ids)
+        source_info: dict[str, dict[str, Any]] = {}
+        for source_id in source_ids:
+            row = source_config_map[source_id]
+            source_info[source_id] = source_descriptor(
+                source_id=source_id,
+                source_path=as_text(row["path"]),
+                raw_config=row["config_json"],
+            )
 
         for token in tokens:
             enriched: dict[str, Any] = {}
@@ -959,6 +1137,8 @@ def cmd_verse(args: argparse.Namespace) -> int:
             "hebrew": hebrew,
             "tokens": tokens,
         }
+        if source_info:
+            result["source_info"] = source_info
         if verse_annotations:
             result["verse_annotations"] = verse_annotations
         if word_annotations:
@@ -975,6 +1155,12 @@ def cmd_verse(args: argparse.Namespace) -> int:
             for token in tokens:
                 print(f"{token['word_index']}\t{token['text']}\t{token['lemma']}\t{token['morph']}\t{token['bdb']}")
             return 0
+        if source_info:
+            source_label = "; ".join(
+                f"{source_id}={info.get('display_name', source_id)} [{info.get('rendering_id', source_id)}]"
+                for source_id, info in source_info.items()
+            )
+            print(f"Sources: {source_label}")
         print(hebrew)
         return 0
     finally:
@@ -1073,15 +1259,29 @@ def cmd_source_list(args: argparse.Namespace) -> int:
               s.root_path,
               s.key_field,
               s.lookup_token_field,
+              s.config_json,
               s.enabled,
               COUNT(se.entry_key) AS entry_count
             FROM sources s
             LEFT JOIN source_entries se ON se.source_id = s.source_id
-            GROUP BY s.source_id, s.source_type, s.path, s.root_path, s.key_field, s.lookup_token_field, s.enabled
+            GROUP BY s.source_id, s.source_type, s.path, s.root_path, s.key_field, s.lookup_token_field, s.config_json, s.enabled
             ORDER BY s.source_id
             """
         ).fetchall()
-        result = [dict(row) for row in rows]
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            descriptor = source_descriptor(
+                source_id=as_text(item.get("source_id")),
+                source_path=as_text(item.get("path")),
+                raw_config=item.get("config_json"),
+            )
+            item["display_name"] = descriptor.get("display_name", "")
+            item["provider"] = descriptor.get("provider", "")
+            item["dataset"] = descriptor.get("dataset", "")
+            item["rendering_id"] = descriptor.get("rendering_id", "")
+            item.pop("config_json", None)
+            result.append(item)
 
         if args.format == "json":
             print_json(result)
@@ -1089,14 +1289,26 @@ def cmd_source_list(args: argparse.Namespace) -> int:
         if args.format == "tsv":
             print_tsv(
                 result,
-                ["source_id", "source_type", "lookup_token_field", "entry_count", "path", "root_path", "key_field", "enabled"],
+                [
+                    "source_id",
+                    "display_name",
+                    "provider",
+                    "rendering_id",
+                    "lookup_token_field",
+                    "entry_count",
+                    "path",
+                    "root_path",
+                    "key_field",
+                    "enabled",
+                ],
                 not args.no_header,
             )
             return 0
 
         for row in result:
             print(
-                f"{row['source_id']}\ttype={row['source_type']}\tlookup={row['lookup_token_field']}\t"
+                f"{row['source_id']}\tname={row['display_name']}\tprovider={row['provider'] or 'unknown'}\t"
+                f"rendering={row['rendering_id']}\tlookup={row['lookup_token_field']}\t"
                 f"entries={row['entry_count']}\tpath={row['path']}"
             )
         return 0
@@ -1159,21 +1371,47 @@ def cmd_source_lookup(args: argparse.Namespace) -> int:
     conn = connect_db(resolve_path(args.db))
     try:
         ensure_schema(conn)
+        source_row = conn.execute(
+            "SELECT source_id, path, config_json FROM sources WHERE source_id = ?",
+            (args.id,),
+        ).fetchone()
+        if source_row is None:
+            raise CLIError(f"Unknown source: {args.id}")
+
+        source_info = source_descriptor(
+            source_id=args.id,
+            source_path=as_text(source_row["path"]),
+            raw_config=source_row["config_json"],
+        )
+
         payload = lookup_source_payload(conn, args.id, args.key)
         if payload is None:
             raise CLIError(f"No entry for key '{args.key}' in source '{args.id}'.")
 
         if args.format == "json":
-            print_json({"source_id": args.id, "key": args.key, "entry": payload})
+            print_json({"source_id": args.id, "key": args.key, "source_info": source_info, "entry": payload})
             return 0
         if args.format == "tsv":
             print_tsv(
-                [{"source_id": args.id, "key": args.key, "entry": payload}],
-                ["source_id", "key", "entry"],
+                [
+                    {
+                        "source_id": args.id,
+                        "key": args.key,
+                        "display_name": source_info.get("display_name"),
+                        "provider": source_info.get("provider", ""),
+                        "rendering_id": source_info.get("rendering_id"),
+                        "entry": payload,
+                    }
+                ],
+                ["source_id", "key", "display_name", "provider", "rendering_id", "entry"],
                 not args.no_header,
             )
             return 0
 
+        print(
+            f"Source: {source_info.get('display_name', args.id)} "
+            f"(provider={source_info.get('provider', 'unknown')}, rendering={source_info.get('rendering_id', args.id)})"
+        )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
     finally:

@@ -112,14 +112,32 @@ This repo includes a converter:
 
 ```bash
 cd /Users/tindelllockett/projects/peter-test
-./scripts/import_wlc_bdb.py
+./scripts/import_wlc_bdb.py --refresh-bdb-sefaria
 ```
 
 It downloads and converts:
 
 - Westminster Leningrad / MorphHB source: `https://github.com/openscriptures/morphhb`
-- Hebrew Lexicon (includes Brown-Driver-Briggs XML): `https://github.com/openscriptures/HebrewLexicon`
-  - Strongs Hebrew dataset: `StrongHebrew.xml` in the same repo (open XML source)
+- Hebrew Strong's + lexical index data: `https://github.com/openscriptures/HebrewLexicon`
+- Brown-Driver-Briggs entries from Sefaria BDB API (`https://www.sefaria.org/api/index/BDB`)
+  - Raw crawl cache is saved to `data/bdb_sefaria_raw.json`
+  - Re-run without `--refresh-bdb-sefaria` to re-use the cached crawl (offline/reproducible)
+
+## Verify BDB quality and encoding
+
+Run source-completeness checks (raw chain), scan-backed sample checks, and encoding hygiene checks:
+
+```bash
+./scripts/verify_bdb_authoritative.py --bdb data/bdb_full.json --raw data/bdb_sefaria_raw.json
+```
+
+Run parser unit tests:
+
+```bash
+python3 -m unittest tests/test_import_wlc_bdb.py tests/test_bdb_sefaria_source.py
+```
+
+Source strategy notes: `docs/bdb_source_strategy.md`
 
 ## Notes on source texts
 

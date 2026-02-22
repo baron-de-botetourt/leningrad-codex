@@ -70,6 +70,9 @@ def validate_bdb(bdb):
         return errors, set()
 
     ids = set(entries.keys())
+    aliases = bdb.get("aliases", {})
+    if isinstance(aliases, dict):
+        ids.update(str(k) for k in aliases.keys())
     for entry_id, entry in entries.items():
         check(isinstance(entry, dict), errors, f"BDB: entries.{entry_id} must be an object")
         if not isinstance(entry, dict):
